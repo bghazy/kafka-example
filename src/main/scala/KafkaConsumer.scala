@@ -2,6 +2,8 @@ import java.util
 import java.util.Properties
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import scala.collection.JavaConverters._
+import java.util.regex.Pattern
+
 
 object KafkaConsumer extends App {
 
@@ -15,11 +17,12 @@ object KafkaConsumer extends App {
   consumer.subscribe(util.Collections.singletonList("logs"))
   val records = consumer.poll(100000).asScala.map{
     record=>{
-      (record.value().split(" ")(0) ++ " " ++record.value().split(" ")(1),
-      record.value().split(" ")(2).replace("[","").replace("]","")  match {
-        case "info" => "info"
-        case "warn" => "warn"
-        case "error" => "error"
+      val value = Pattern.compile(" ").split(record.value())
+      (value(0) ++ " " ++ value(1),
+      value(2) match {
+        case "[info]" => "info"
+        case "[warn]" => "warn"
+        case "[error]" => "error"
         case _ => "other"
       },
       record.value())
