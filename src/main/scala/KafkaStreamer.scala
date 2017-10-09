@@ -35,13 +35,11 @@ object KafkaStreamer extends App {
   val levels = Array("info", "warn", "error", "other")
   levels.foreach{
     level => {
-      val grouped: KGroupedStream[String, (String,String,String)] = records.filter(new Predicate[String, (String,String,String)] {
+      records.filter(new Predicate[String, (String,String,String)] {
         override def test(key: String, value: (String,String,String)): Boolean = value._2 == level
       }).groupBy[String](new KeyValueMapper[String,(String,String,String),String]() {
         override def apply(key: String, value: (String,String,String)): (String) = value._1
-      })
-      val ktable:KTable[String, java.lang.Long] = grouped.count(level)
-      ktable.to(stringSerde, longSerde, level)
+      }).count(level).toStream.to(stringSerde, longSerde, level)
     }
   }
 
