@@ -26,7 +26,6 @@ object KafkaProducer extends App {
         }
       }
     })
-    val meta = metaF.get()
   }
   producer.close()
 }
