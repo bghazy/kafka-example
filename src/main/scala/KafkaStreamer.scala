@@ -17,8 +17,6 @@ object KafkaStreamer extends App {
 
   val builder: KStreamBuilder = new KStreamBuilder
   val stringSerde: Serde[String] = Serdes.serdeFrom(new StringSerializer, new StringDeserializer)
-  val longSerde: Serde[java.lang.Long] = Serdes.serdeFrom(new LongSerializer,new LongDeserializer)
-  val byteArraySerde : Serde[Array[Byte]] = Serdes.serdeFrom(new ByteArraySerializer, new ByteArrayDeserializer)
   val logs: KStream[String, String] = builder.stream(stringSerde, stringSerde, "logs")
   val records: KStream[String, (String,String,String)] = logs.mapValues{
     record : String=>{
