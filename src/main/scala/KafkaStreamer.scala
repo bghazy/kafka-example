@@ -37,10 +37,12 @@ object KafkaStreamer extends App {
     level => {
       records.filter(new Predicate[String, (String,String,String)] {
         override def test(key: String, value: (String,String,String)): Boolean = value._2 == level
-      }).map [String, Integer]{new KeyValueMapper[String, (String,String,String), KeyValue[String, Integer]] {
-        override def apply(key: String, value: (String,String,String)): KeyValue[String, Integer] = {
-          new KeyValue(value._1, 1)
-        }
+      }).map[String, Integer] {
+        new KeyValueMapper[String, (String, String, String), KeyValue[String, Integer]] {
+          override def apply(key: String, value: (String, String, String)): KeyValue[String, Integer] = {
+            val v = Pattern.compile(":").split(value._1)
+            new KeyValue(v(0) + ":" + v(1), 1)
+          }
       }}.groupByKey(Serdes.String, Serdes.Integer).reduce(new Reducer[Integer] {
         override def apply(value1: Integer, value2: Integer): Integer = value1 + value2
       },level).to(level)
