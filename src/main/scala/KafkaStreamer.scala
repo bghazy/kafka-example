@@ -1,25 +1,30 @@
 import java.util.Properties
 import java.util.regex.Pattern
+import java.sql.Timestamp
+import java.text.SimpleDateFormat
 import org.apache.kafka.streams.KeyValue
 import org.apache.kafka.streams.kstream._
-import org.apache.kafka.common.serialization.{Serdes, StringDeserializer, StringSerializer, _}
+import org.apache.kafka.common.serialization._
 import org.apache.kafka.streams.KafkaStreams
+import org.apache.kafka.streams.errors.InvalidStateStoreException
+import org.apache.kafka.streams.state.{QueryableStoreTypes, ReadOnlyWindowStore}
+import scala.util.{Failure, Success, Try}
 
 object KafkaStreamer extends App {
 
-  val  props = new Properties()
+  val props = new Properties()
   props.put("bootstrap.servers", "localhost:9092")
-  props.put("zookeeper.connect", "localhost:2181")
-  props.put("key.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
-  props.put("value.deserializer", "org.apache.kafka.common.serialization.StringDeserializer")
-  props.put("group.id", "something")
+  props.put("key.deserializer", Serdes.String().getClass)
+  props.put("value.deserializer", Serdes.String().getClass)
+  props.put("serializer.class", "kafka.serializer.DefaultEncoder")
   props.put("application.id", "logs")
 
   val builder: KStreamBuilder = new KStreamBuilder
-  val stringSerde: Serde[String] = Serdes.serdeFrom(new StringSerializer, new StringDeserializer)
-  val logs: KStream[String, String] = builder.stream(stringSerde, stringSerde, "logs")
-  val records: KStream[String, (String,String,String)] = logs.mapValues{
-    record : String=>{
+  val logs: KStream[String, String] = builder.stream(Serdes.String, Serdes.String, "logs")
+
+
+  val records: KStream[String, (String, String, String)] = logs.mapValues {
+    record: String => {
       val value = Pattern.compile(" ").split(record.toString)
       (value(0) ++ " " ++ value(1),
         value(2) match {
@@ -32,26 +37,80 @@ object KafkaStreamer extends App {
     }
   }
 
-  val levels = Array("info", "warn", "error", "other")
-  levels.foreach{
-    level => {
-      records.filter(new Predicate[String, (String,String,String)] {
-        override def test(key: String, value: (String,String,String)): Boolean = value._2 == level
-      }).map[String, Integer] {
-        new KeyValueMapper[String, (String, String, String), KeyValue[String, Integer]] {
-          override def apply(key: String, value: (String, String, String)): KeyValue[String, Integer] = {
-            val v = Pattern.compile(":").split(value._1)
-            new KeyValue(v(0) + ":" + v(1), 1)
-          }
-      }}.groupByKey(Serdes.String, Serdes.Integer).reduce(new Reducer[Integer] {
-        override def apply(value1: Integer, value2: Integer): Integer = value1 + value2
-      },level).to(level)
+  def createFilteredKStream(records: KStream[String, (String, String, String)], level: String): KStream[String, (String, String, String)] = {
+    records.filter(new Predicate[String, (String, String, String)] {
+      override def test(key: String, value: (String, String, String)): Boolean = value._2 == level
+    })
+  }
+
+  def createMappedKStream(records: KStream[String, (String, String, String)]): KStream[String, String] = {
+    records.map[String, String] {
+      new KeyValueMapper[String, (String, String, String), KeyValue[String, String]] {
+        override def apply(key: String, value: (String, String, String)): KeyValue[String, String] = {
+          val v = Pattern.compile(":").split(value._1)
+          new KeyValue(getTimestamp(v(0) + ":" + v(1) + ":00").getTime.toString, value._3)
+        }
+      }
     }
   }
 
+  def createGroupedKStream(records: KStream[String, String]): KGroupedStream[String, String] = {
+    records.groupByKey(Serdes.String, Serdes.String())
+  }
 
-  val streams = new KafkaStreams(builder, props)
+  def storeWindowed(streams: KafkaStreams, level: String): Unit = {
+    println(level)
+    var timeFrom = 0L
+    var search=getTimestamp("2017/10/04 03:29:00").getTime
+
+    while(search<getTimestamp("2017/10/04 10:12:00").getTime){
+      Thread.sleep(600L)
+      try {
+        val store: ReadOnlyWindowStore[String, Long] = streams.store(level, QueryableStoreTypes.windowStore[String, Long]())
+        val timeTo = System.currentTimeMillis
+
+
+        val iterator = store.fetch((search).toString, timeFrom, timeTo)
+        var count=0L
+        while ( {iterator.hasNext}) {
+          val next = iterator.next
+          count=next.value
+
+        }
+        println(search+":"+count)
+        search=search+60000L
+
+      } catch {
+        case ioe: InvalidStateStoreException => {
+          //println(ioe)
+          Thread.sleep(100)
+        }
+      }
+    }
+  }
+
+  def getTimestamp(s: String): Timestamp = s match {
+    case "" => new Timestamp(0)
+    case _ => {
+      val format = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss")
+      Try(new Timestamp(format.parse(s).getTime)) match {
+        case Success(t) => t
+        case Failure(_) => new Timestamp(0)
+      }
+    }
+  }
+
+  createGroupedKStream(createMappedKStream(createFilteredKStream(records, "error"))).count(TimeWindows.of(60 * 1000), "error")
+  createGroupedKStream(createMappedKStream(createFilteredKStream(records, "info"))).count(TimeWindows.of(60 * 1000), "info")
+  createGroupedKStream(createMappedKStream(createFilteredKStream(records, "warn"))).count(TimeWindows.of(60 * 1000), "warn")
+
+
+
+  val streams: KafkaStreams = new KafkaStreams(builder, props)
   streams.start()
 
+  storeWindowed(streams, "error")
+  storeWindowed(streams, "info")
+  storeWindowed(streams, "warn")
 
 }
