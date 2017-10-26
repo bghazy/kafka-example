@@ -1,5 +1,6 @@
 import java.util.Properties
 import java.util.regex.Pattern
+import java.util.Date
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import org.apache.kafka.streams.KeyValue
@@ -26,7 +27,7 @@ object KafkaStreamer extends App {
   val records: KStream[String, (String, String, String)] = logs.mapValues {
     record: String => {
       val value = Pattern.compile(" ").split(record.toString)
-      (value(0) ++ " " ++ value(1),
+      (value(0) + " " + value(1),
         value(2) match {
           case "[info]" => "info"
           case "[warn]" => "warn"
@@ -58,27 +59,27 @@ object KafkaStreamer extends App {
     records.groupByKey(Serdes.String, Serdes.String())
   }
 
-  def storeWindowed(streams: KafkaStreams, level: String): Unit = {
-    println(level)
-    var timeFrom = 0L
-    var search=getTimestamp("2017/10/04 03:29:00").getTime
+  def storeWindowed(streams: KafkaStreams, level: String, fromKey:Long, toKey:Long): Unit = {
+    println(level+"-started")
 
-    while(search<getTimestamp("2017/10/04 10:12:00").getTime){
-      Thread.sleep(600L)
+    var search = fromKey
+    Thread.sleep(6000L)
+    while (search < toKey) {
       try {
         val store: ReadOnlyWindowStore[String, Long] = streams.store(level, QueryableStoreTypes.windowStore[String, Long]())
+        val timeFrom = 0L
         val timeTo = System.currentTimeMillis
-
-
         val iterator = store.fetch((search).toString, timeFrom, timeTo)
-        var count=0L
-        while ( {iterator.hasNext}) {
+        var count = 0L
+        while ( {
+          iterator.hasNext
+        }) {
           val next = iterator.next
-          count=next.value
+          count = next.value
 
         }
-        println(search+":"+count)
-        search=search+60000L
+        if(count>0) println(new SimpleDateFormat("yyyy/MM/dd HH:mm:ss").format(new Date(search)) + ":" + count)
+        search = search + 60000L
 
       } catch {
         case ioe: InvalidStateStoreException => {
@@ -87,6 +88,7 @@ object KafkaStreamer extends App {
         }
       }
     }
+    println(level+"-ended")
   }
 
   def getTimestamp(s: String): Timestamp = s match {
@@ -105,12 +107,11 @@ object KafkaStreamer extends App {
   createGroupedKStream(createMappedKStream(createFilteredKStream(records, "warn"))).count(TimeWindows.of(60 * 1000), "warn")
 
 
-
   val streams: KafkaStreams = new KafkaStreams(builder, props)
   streams.start()
 
-  storeWindowed(streams, "error")
-  storeWindowed(streams, "info")
-  storeWindowed(streams, "warn")
+  storeWindowed(streams, "info", getTimestamp("2017/10/04 03:28:00").getTime, getTimestamp("2017/10/04 10:12:00").getTime)
+  storeWindowed(streams, "error", getTimestamp("2017/10/04 03:28:00").getTime, getTimestamp("2017/10/04 10:12:00").getTime)
+  storeWindowed(streams, "warn", getTimestamp("2017/10/04 03:28:00").getTime, getTimestamp("2017/10/04 10:12:00").getTime)
 
 }
